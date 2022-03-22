@@ -31,10 +31,14 @@ class MultiResolutionDataset(Dataset):
     def __getitem__(self, index):
         with self.env.begin(write=False) as txn:
             key = f'{self.resolution}-{str(index).zfill(5)}'.encode('utf-8')
+            # binary files in database
             img_bytes = txn.get(key)
 
+        #first read the binary file
         buffer = BytesIO(img_bytes)
+        #then open the binary file, get an image object
         img = Image.open(buffer)
+        #apply some transform, which is useless in our case.
         img = self.transform(img)
 
         return img
