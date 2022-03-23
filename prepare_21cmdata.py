@@ -6,6 +6,7 @@ import os
 import numpy as np
 
 from PIL import Image
+from torch import dtype
 import lmdb
 from tqdm import tqdm
 from torchvision import datasets
@@ -61,7 +62,9 @@ def prepare21cm(
     #load the 21cm datacubes
     total=0
     for filename in filenames:
-        datacache=np.load(filename)
+        datacache=np.load(filename).astype(np.float32)
+        #in many cases we dont neet to do the normalization here, the 21cm signal is always less than 255, thus PIL can handle this
+        #datacache=datacache/(3*np.std(datacache))
         for i in range(slices):
             key = f"{size[0]}-{str(total).zfill(6)}".encode("utf-8")
             with env.begin(write=True) as txn:
