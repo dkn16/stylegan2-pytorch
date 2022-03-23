@@ -132,3 +132,4 @@ wandb/
 *.lmdb/
 *.pkl
 train.pbs
+styleGAN.o*
