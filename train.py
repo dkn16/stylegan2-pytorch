@@ -48,9 +48,11 @@ def save_image(tensor, fp, nrow=8, padding=2,
     grid = utils.make_grid(tensor, nrow=nrow, padding=padding, pad_value=pad_value,
                      normalize=normalize, range=range, scale_each=scale_each)
     # Add 0.5 after unnormalizing to [0, 255] to round to nearest integer
-    ndarr = grid.mul(255).to('cpu', torch.float32).numpy()
-    im = plt.imshow(ndarr[0])
+    ndarr = grid.to('cpu', torch.float32).numpy()
+    plt.imshow(ndarr[0],vmin=0,vmax=3*np.std(ndarr[0]))
+    plt.colorbar()
     plt.savefig(fp, format=format,dpi=200)
+    plt.close()
 
 def data_sampler(dataset, shuffle, distributed):
     if distributed:
@@ -329,9 +331,9 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
                     sample, _ = g_ema([sample_z])
                     save_image(
                         sample,
-                        f"sample/{str(i).zfill(6)}.pdf",
+                        f"sample/{str(i).zfill(6)}.png",
                         nrow=int(args.n_sample ** 0.5),
-                        normalize=True,
+                        normalize=False,
                         range=(-1, 1),
                     )
 
@@ -358,7 +360,7 @@ if __name__ == "__main__":
     parser.add_argument("path", type=str, help="path to the lmdb dataset")
     parser.add_argument('--arch', type=str, default='stylegan2', help='model architectures (stylegan2 | swagan)')
     parser.add_argument(
-        "--iter", type=int, default=80000, help="total training iterations"
+        "--iter", type=int, default=100001, help="total training iterations"
     )
     parser.add_argument(
         "--batch", type=int, default=16, help="batch sizes for each gpus"
@@ -534,7 +536,7 @@ if __name__ == "__main__":
         [
             #transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
-            transforms.Normalize((0.5,), (0.5,), inplace=True),
+            #transforms.Normalize((0.5,), (0.5,), inplace=True),
         ]
     )
 
