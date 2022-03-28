@@ -2,9 +2,9 @@ import argparse
 
 import torch
 from torchvision import utils
-from model import Generator
+from model21cm import Generator
 from tqdm import tqdm
-
+from train import save_image
 
 def generate(args, g_ema, device, mean_latent):
 
@@ -17,11 +17,11 @@ def generate(args, g_ema, device, mean_latent):
                 [sample_z], truncation=args.truncation, truncation_latent=mean_latent
             )
 
-            utils.save_image(
+            save_image(
                 sample,
                 f"sample/{str(i).zfill(6)}.png",
                 nrow=1,
-                normalize=True,
+                normalize=False,
                 range=(-1, 1),
             )
 
