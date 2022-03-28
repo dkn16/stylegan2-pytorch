@@ -51,7 +51,7 @@ def save_image(tensor, fp, nrow=8, padding=2,
     ndarr = grid.to('cpu', torch.float32).numpy()
     plt.imshow(ndarr[0],vmin=0,vmax=3*np.std(ndarr[0]))
     plt.colorbar()
-    plt.savefig(fp, format=format,dpi=200)
+    plt.savefig(fp, format=format,dpi=500,bbox_inches='tight')
     plt.close()
 
 def data_sampler(dataset, shuffle, distributed):

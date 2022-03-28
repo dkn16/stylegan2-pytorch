@@ -133,3 +133,5 @@ wandb/
 *.pkl
 train.pbs
 styleGAN.o*
+factor.pt
+factor*.png

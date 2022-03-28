@@ -3,8 +3,8 @@ import argparse
 import torch
 from torchvision import utils
 
-from model import Generator
-
+from model21cm import Generator
+from train import save_image
 
 if __name__ == "__main__":
     torch.set_grad_enabled(False)
@@ -85,10 +85,10 @@ if __name__ == "__main__":
         input_is_latent=True,
     )
 
-    grid = utils.save_image(
+    grid = save_image(
         torch.cat([img1, img, img2], 0),
         f"{args.out_prefix}_index-{args.index}_degree-{args.degree}.png",
-        normalize=True,
+        normalize=False,
         range=(-1, 1),
         nrow=args.n_sample,
     )
