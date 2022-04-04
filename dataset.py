@@ -30,11 +30,14 @@ class MultiResolutionDataset(Dataset):
 
     def __getitem__(self, index):
         with self.env.begin(write=False) as txn:
-            key = f'{self.resolution}-{str(index).zfill(6)}'.encode('utf-8')
+            key = f'{self.resolution[0]}-{str(index).zfill(7)}'.encode('utf-8')
+            #key_label = f'{self.resolution[0]}-{str(index).zfill(7)}_label'.encode('utf-8')
             # binary files in database
             #now change to numpy array
             img_str = txn.get(key)
-            img_np=np.fromstring(img_str,dtype=np.float32).reshape((self.resolution,self.resolution))
+            img_np=np.fromstring(img_str,dtype=np.float32).reshape((self.resolution[0],self.resolution[1]))
+            #label_str = txn.get(key_label)
+            #label_np=np.fromstring(label_str,dtype=np.float32)
 
         #first read the binary file
         #buffer = BytesIO(img_bytes)
