@@ -91,32 +91,32 @@ def prepareconditional21cm(
         print('Please check the dimension of 21cm cube, should be 3D')
         exit
     
-    slices=np.shape(datacache)[0]
+    slices=int(np.shape(datacache)[0]/8)
     width=np.shape(datacache)[1]
     length=np.shape(datacache)[2]
-    widthstartpoint=int((size[0]-width)/2.)
-    lengthstartpoint=int((size[1]-length)/2.)
+    widthstartpoint=int(np.abs(size[0]-width)/2.)
+    lengthstartpoint=int(np.abs(size[1]-length)/2.)
     #load the 21cm datacubes
     total=0
     for i in range(9998):
         datacube=np.load(filenames[i]).astype(np.float32)
-        datacache=datacube[:,widthstartpoint:widthstartpoint+size[0],lengthstartpoint:lengthstartpoint+size[1]]
+        datacache=datacube[::8,widthstartpoint:widthstartpoint+size[0],lengthstartpoint:lengthstartpoint+size[1]]
         paramcache=np.load(paramfilename[i]).astype(np.float32)
         #in many cases we dont neet to do the normalization here, the 21cm signal is always less than 255, thus PIL can handle this
         #datacache=datacache/(3*np.std(datacache))
         for i in range(slices):
-            key = f"{size[0]}-{str(total).zfill(7)}".encode("utf-8")
-            key_label = f"{size[0]}-{str(total).zfill(7)}_label".encode("utf-8")
+            key = f"{size[0]}-{str(total).zfill(6)}".encode("utf-8")
+            key_label = f"{size[0]}-{str(total).zfill(6)}_label".encode("utf-8")
             with env.begin(write=True) as txn:
-                txn.put(key, datacache[i])
+                txn.put(key, datacache[i].copy())
                 txn.put(key_label,paramcache)
             total += 1
-        datacache=datacube.transpose(1,0,2)[:,widthstartpoint:widthstartpoint+size[0],lengthstartpoint:lengthstartpoint+size[1]]
+        datacache=datacube.transpose(1,0,2)[::8,widthstartpoint:widthstartpoint+size[0],lengthstartpoint:lengthstartpoint+size[1]]
         for i in range(slices):
-            key = f"{size[0]}-{str(total).zfill(7)}".encode("utf-8")
-            key_label = f"{size[0]}-{str(total).zfill(7)}_label".encode("utf-8")
+            key = f"{size[0]}-{str(total).zfill(6)}".encode("utf-8")
+            key_label = f"{size[0]}-{str(total).zfill(6)}_label".encode("utf-8")
             with env.begin(write=True) as txn:
-                txn.put(key, datacache[i])
+                txn.put(key, datacache[i].copy())
                 txn.put(key_label,paramcache)
             total += 1
 

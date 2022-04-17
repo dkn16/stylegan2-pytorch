@@ -320,7 +320,7 @@ class ConstantInput(nn.Module):
     def __init__(self, channel, size=4):
         super().__init__()
 
-        self.input = nn.Parameter(torch.randn(1, channel, size, 4*size))
+        self.input = nn.Parameter(torch.randn(1, channel, size, 8*size))
 
     def forward(self, input):
         batch = input.shape[0]
@@ -419,8 +419,8 @@ class Generator(nn.Module):
             4: 512,
             8: 512,
             16: 512,
-            32: 512,
-            64: 256 * channel_multiplier,
+            32: 512 ,
+            64: 128 * channel_multiplier,
             128: 128 * channel_multiplier,
             256: 64 * channel_multiplier,
             512: 32 * channel_multiplier,
@@ -645,7 +645,7 @@ class Discriminator(nn.Module):
             8: 512,
             16: 512,
             32: 512,
-            64: 256 * channel_multiplier,
+            64: 128* channel_multiplier,
             128: 128 * channel_multiplier,
             256: 64 * channel_multiplier,
             512: 32 * channel_multiplier,
@@ -672,8 +672,9 @@ class Discriminator(nn.Module):
 
         self.final_conv = ConvLayer(in_channel + 1, channels[4], 3)
         self.final_linear = nn.Sequential(
-            EqualLinear(channels[4] * 4 * 4, channels[4], activation="fused_lrelu"),
-            EqualLinear(channels[4], 1),
+            #Here need to be modified 
+            EqualLinear(channels[4] * 4 * 4 * 8, channels[4]*4, activation="fused_lrelu"),
+            EqualLinear(channels[4]*4, 1),
         )
 
     def forward(self, input):

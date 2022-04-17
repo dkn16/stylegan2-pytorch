@@ -32,6 +32,33 @@ from non_leaking import augment, AdaptiveAugment
 
 #use matplotlib as substitution
 from matplotlib import pyplot as plt
+
+class RandomFlip(object):
+    """Horizontally flip the given numpy Image randomly with a given probability.
+
+    Args:
+        p (float): probability of the image being flipped. Default value is 0.5
+    """
+
+    def __init__(self, p=0.5):
+        self.p = p
+
+    def __call__(self, img):
+        """
+        Args:
+            img (numpy array): Image to be flipped.
+
+        Returns:
+            PIL Image: Randomly flipped image.
+        """
+        if random.random() < self.p:
+            img = np.flip(img,axis=0)
+        return np.ascontiguousarray(img)
+
+    def __repr__(self):
+        return self.__class__.__name__ + '(p={})'.format(self.p)
+
+
 def save_image(tensor, fp, nrow=8, padding=2,
                normalize=False, range=None, scale_each=False, pad_value=0, format=None):
     """Save a given Tensor into an image file.
@@ -51,7 +78,7 @@ def save_image(tensor, fp, nrow=8, padding=2,
     ndarr = grid.to('cpu', torch.float32).numpy()
     plt.imshow(ndarr[0],vmin=0,vmax=3*np.std(ndarr[0]))
     plt.colorbar()
-    plt.savefig(fp, format=format,dpi=500,bbox_inches='tight')
+    plt.savefig(fp, format=format,dpi=200,bbox_inches='tight')
     plt.close()
 
 def data_sampler(dataset, shuffle, distributed):
@@ -330,9 +357,9 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
                     g_ema.eval()
                     sample, _ = g_ema([sample_z])
                     save_image(
-                        sample,
+                        sample[0:10],
                         f"sample/{str(i).zfill(6)}.png",
-                        nrow=int(args.n_sample ** 0.5),
+                        nrow=1,
                         normalize=False,
                         range=(-1, 1),
                     )
@@ -372,7 +399,7 @@ if __name__ == "__main__":
         help="number of the samples generated during training",
     )
     parser.add_argument(
-        "--size", type=int, default=256, help="image sizes for the model"
+        "--size", type=str, default=256, help="image sizes for the model"
     )
     parser.add_argument(
         "--r1", type=float, default=10, help="weight of the r1 regularization"
@@ -455,7 +482,8 @@ if __name__ == "__main__":
 
     n_gpu = int(os.environ["WORLD_SIZE"]) if "WORLD_SIZE" in os.environ else 1
     args.distributed = n_gpu > 1
-
+    sizes = [int(s.strip()) for s in args.size.split(",")]
+    args.size=sizes
     if args.distributed:
         torch.cuda.set_device(args.local_rank)
         torch.distributed.init_process_group(backend="nccl", init_method="env://")
@@ -473,13 +501,13 @@ if __name__ == "__main__":
         from swagan import Generator, Discriminator
 
     generator = Generator(
-        args.size, args.latent, args.n_mlp, channel_multiplier=args.channel_multiplier
+        args.size[0], args.latent, args.n_mlp, channel_multiplier=args.channel_multiplier
     ).to(device)
     discriminator = Discriminator(
-        args.size, channel_multiplier=args.channel_multiplier
+        args.size[0], channel_multiplier=args.channel_multiplier
     ).to(device)
     g_ema = Generator(
-        args.size, args.latent, args.n_mlp, channel_multiplier=args.channel_multiplier
+        args.size[0], args.latent, args.n_mlp, channel_multiplier=args.channel_multiplier
     ).to(device)
     g_ema.eval()
     accumulate(g_ema, generator, 0)
@@ -535,12 +563,16 @@ if __name__ == "__main__":
     transform = transforms.Compose(
         [
             #transforms.RandomHorizontalFlip(),
+            RandomFlip(),
             transforms.ToTensor(),
             #transforms.Normalize((0.5,), (0.5,), inplace=True),
         ]
     )
-
-    dataset = MultiResolutionDataset(args.path, transform, args.size)
+    
+    if len(sizes)>2:
+        print('Image size should be 1 or 2 numbers')
+        exit
+    dataset = MultiResolutionDataset(args.path, transform, sizes)
     loader = data.DataLoader(
         dataset,
         batch_size=args.batch,
