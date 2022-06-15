@@ -2,7 +2,7 @@ import argparse
 
 import torch
 from torchvision import utils
-from model21cm import Generator
+from model21cm import Generator, NoiseInjection
 from tqdm import tqdm
 from train import save_image
 
@@ -65,7 +65,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    args.latent = 512
+    args.latent = 2
     args.n_mlp = 8
 
     g_ema = Generator(

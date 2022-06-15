@@ -59,8 +59,8 @@ class RandomFlip(object):
         return self.__class__.__name__ + '(p={})'.format(self.p)
 
 
-def save_image(tensor, fp, nrow=8, padding=2,
-               normalize=False, range=None, scale_each=False, pad_value=0, format=None):
+def save_image(tensor, latent, fp, nrow=8, padding=2,
+               normalize=False, range=None, scale_each=False, pad_value=0, format=None,use_wandb = False, iteration = 0):
     """Save a given Tensor into an image file.
 
     Args:
@@ -76,9 +76,19 @@ def save_image(tensor, fp, nrow=8, padding=2,
                      normalize=normalize, range=range, scale_each=scale_each)
     # Add 0.5 after unnormalizing to [0, 255] to round to nearest integer
     ndarr = grid.to('cpu', torch.float32).numpy()
+    latent=latent.to('cpu', torch.float32).numpy()
+    plt.figure(figsize=(10,14))
     plt.imshow(ndarr[0],vmin=0,vmax=3*np.std(ndarr[0]))
+    y_ticks=[]
+    y_str=[]
+    for i in [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]:
+        y_ticks.append(32+i*66)
+        y_str.append('{:.3f}'.format(latent[i][0]*2+4)+','+'{:.1f}'.format(10**(latent[i][1]*1.398+1)))
+    plt.yticks(y_ticks,y_str)
     plt.colorbar()
-    plt.savefig(fp, format=format,dpi=200,bbox_inches='tight')
+    plt.savefig(fp, format=format,dpi=300,bbox_inches='tight')
+    if use_wandb:
+        wandb.log({'plt':wandb.Image(fp)},step=iteration)
     plt.close()
 
 def data_sampler(dataset, shuffle, distributed):
@@ -158,19 +168,34 @@ def make_noise(batch, latent_dim, n_noise, device):
 
     return noises
 
+def make_label(batch, latent_dim, n_noise, device):
+    if n_noise == 1:
+        return torch.rand(batch, latent_dim, device=device)
 
-def mixing_noise(batch, latent_dim, prob, device):
+    noises = torch.rand(n_noise, batch, latent_dim, device=device)
+
+    return noises
+
+
+def mixing_noise(batch,param_dim, latent_dim, prob, device):
+    label = make_label(batch,param_dim,1,device)
     if prob > 0 and random.random() < prob:
-        return make_noise(batch, latent_dim, 2, device)
+        return label,make_noise(batch, latent_dim, 2, device)
 
     else:
-        return [make_noise(batch, latent_dim, 1, device)]
+        return label,[make_noise(batch, latent_dim, 1, device)]
 
 
 def set_grad_none(model, targets):
     for n, p in model.named_parameters():
         if n in targets:
             p.grad = None
+
+def show_samples(n,device):
+    x=np.linspace(0.,1.,n+1,endpoint=False)[1:n+1]
+    y=np.linspace(0.,1.,n+1,endpoint=False)[1:n+1]
+    samples=np.array(np.meshgrid(x,y)).T.reshape(-1,2)
+    return torch.tensor(samples,device=device).float()
 
 
 def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, device):
@@ -206,7 +231,8 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
     if args.augment and args.augment_p == 0:
         ada_augment = AdaptiveAugment(args.ada_target, args.ada_length, 8, device)
 
-    sample_z = torch.randn(args.n_sample, args.latent, device=device)
+    sample_z = torch.randn(16, args.latent, device=device)
+    sample_c = show_samples(4,device)
 
     for idx in pbar:
         i = idx + args.start_iter
@@ -216,14 +242,18 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
 
             break
 
-        real_img = next(loader)
+        # load the training image
+        real_img, real_label = next(loader)
         real_img = real_img.to(device)
+        real_label = real_label.to(device)
 
+        #Then update the discriminator
         requires_grad(generator, False)
         requires_grad(discriminator, True)
 
-        noise = mixing_noise(args.batch, args.latent, args.mixing, device)
-        fake_img, _ = generator(noise)
+        fake_label,noise = mixing_noise(args.batch,args.paramdim, args.latent, args.mixing, device)
+        fake_img, _ = generator(fake_label,noise)
+        #print(fake_img.shape)
 
         if args.augment:
             real_img_aug, _ = augment(real_img, ada_aug_p)
@@ -232,8 +262,15 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
         else:
             real_img_aug = real_img
 
-        fake_pred = discriminator(fake_img)
-        real_pred = discriminator(real_img_aug)
+        #style mixing could cause some problem. We dont need it here.
+        #print(len(noise[0]))
+        #print(len(noise[1]))
+        #print(np.shape(real_img))
+        #print(np.shape(real_label))
+        #print(real_label[0])
+
+        fake_pred = discriminator(fake_img, fake_label)
+        real_pred = discriminator(real_img_aug, real_label)
         d_loss = d_logistic_loss(real_pred, fake_pred)
 
         loss_dict["d"] = d_loss
@@ -259,7 +296,7 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
             else:
                 real_img_aug = real_img
 
-            real_pred = discriminator(real_img_aug)
+            real_pred = discriminator(real_img_aug, real_label)
             r1_loss = d_r1_loss(real_pred, real_img)
 
             discriminator.zero_grad()
@@ -268,17 +305,18 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
             d_optim.step()
 
         loss_dict["r1"] = r1_loss
-
+        
+        #now update the generator
         requires_grad(generator, True)
         requires_grad(discriminator, False)
 
-        noise = mixing_noise(args.batch, args.latent, args.mixing, device)
-        fake_img, _ = generator(noise)
+        fake_label,noise = mixing_noise(args.batch,args.paramdim, args.latent, args.mixing, device)
+        fake_img, _ = generator(fake_label,noise)
 
         if args.augment:
             fake_img, _ = augment(fake_img, ada_aug_p)
 
-        fake_pred = discriminator(fake_img)
+        fake_pred = discriminator(fake_img,fake_label)
         g_loss = g_nonsaturating_loss(fake_pred)
 
         loss_dict["g"] = g_loss
@@ -291,8 +329,8 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
 
         if g_regularize:
             path_batch_size = max(1, args.batch // args.path_batch_shrink)
-            noise = mixing_noise(path_batch_size, args.latent, args.mixing, device)
-            fake_img, latents = generator(noise, return_latents=True)
+            fake_label,noise = mixing_noise(path_batch_size,args.paramdim, args.latent, args.mixing, device)
+            fake_img, latents = generator(fake_label,noise, return_latents=True)
 
             path_loss, mean_path_length, path_lengths = g_path_regularize(
                 fake_img, latents, mean_path_length
@@ -355,15 +393,31 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
             if i % 100 == 0:
                 with torch.no_grad():
                     g_ema.eval()
-                    sample, _ = g_ema([sample_z])
+                    sample, _ = g_ema(sample_c,[sample_z])
                     save_image(
-                        sample[0:10],
+                        sample[0:16],
+                        sample_c,
                         f"sample/{str(i).zfill(6)}.png",
                         nrow=1,
                         normalize=False,
                         range=(-1, 1),
+                        use_wandb=False,
+                        iteration=i
                     )
-
+            if i % 1000 == 0 and wandb:
+                with torch.no_grad():
+                    #g_ema.eval()
+                    #sample, _ = g_ema(sample_c,[sample_z])
+                    save_image(
+                        sample[0:16],
+                        sample_c,
+                        f"sample/{str(i).zfill(6)}.png",
+                        nrow=1,
+                        normalize=False,
+                        range=(-1, 1),
+                        use_wandb=args.wandb,
+                        iteration=i
+                    )
             if i % 10000 == 0:
                 torch.save(
                     {
@@ -477,7 +531,8 @@ if __name__ == "__main__":
         default=256,
         help="probability update interval of the adaptive augmentation",
     )
-
+    torch.manual_seed(42)
+    random.seed(42)
     args = parser.parse_args()
 
     n_gpu = int(os.environ["WORLD_SIZE"]) if "WORLD_SIZE" in os.environ else 1
@@ -489,6 +544,7 @@ if __name__ == "__main__":
         torch.distributed.init_process_group(backend="nccl", init_method="env://")
         synchronize()
 
+    args.paramdim = 2
     args.latent = 512
     args.n_mlp = 8
 
@@ -563,12 +619,12 @@ if __name__ == "__main__":
     transform = transforms.Compose(
         [
             #transforms.RandomHorizontalFlip(),
-            RandomFlip(),
+            #RandomFlip(),
             transforms.ToTensor(),
             #transforms.Normalize((0.5,), (0.5,), inplace=True),
         ]
     )
-    
+
     if len(sizes)>2:
         print('Image size should be 1 or 2 numbers')
         exit
@@ -581,6 +637,6 @@ if __name__ == "__main__":
     )
 
     if get_rank() == 0 and wandb is not None and args.wandb:
-        wandb.init(project="stylegan 2")
+        wandb.init(project="stylegan 2", entity="dkn16")
 
     train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, device)

@@ -4,7 +4,7 @@ import functools
 import operator
 
 import torch
-from torch import nn
+from torch import nn, relu
 from torch.nn import functional as F
 from torch.autograd import Function
 
@@ -313,11 +313,11 @@ class NoiseInjection(nn.Module):
             batch, _, height, width = image.shape
             noise = image.new_empty(batch, 1, height, width).normal_()
 
-        return image + self.weight * noise
+        return  (self.weight * noise) + image
 
 
 class ConstantInput(nn.Module):
-    def __init__(self, channel, size=4):
+    def __init__(self, channel, size=2):
         super().__init__()
 
         self.input = nn.Parameter(torch.randn(1, channel, size, 8*size))
@@ -384,7 +384,6 @@ class ToRGB(nn.Module):
             skip = self.upsample(skip)
 
             out = out + skip
-
         return out
 
 
@@ -392,11 +391,13 @@ class Generator(nn.Module):
     def __init__(
         self,
         size,
-        style_dim,
+        in_style_dim,
         n_mlp,
         channel_multiplier=2,
         blur_kernel=[1, 3, 3, 1],
         lr_mlp=0.01,
+        param_dim=2,
+        style_dim=512
     ):
         super().__init__()
 
@@ -404,9 +405,14 @@ class Generator(nn.Module):
 
         self.style_dim = style_dim
 
+        #MLP layers to deal with the styles: from reionization parameters(2 dim) to latent styles(512 dim)
         layers = [PixelNorm()]
-
-        for i in range(n_mlp):
+        layers.append(
+                EqualLinear(
+                    in_style_dim, style_dim, lr_mul=lr_mlp, activation="fused_lrelu"
+                )
+            )
+        for i in range(n_mlp-1):
             layers.append(
                 EqualLinear(
                     style_dim, style_dim, lr_mul=lr_mlp, activation="fused_lrelu"
@@ -414,8 +420,15 @@ class Generator(nn.Module):
             )
 
         self.style = nn.Sequential(*layers)
-
+        self.preprocess = nn.Sequential( *[EqualLinear(
+                    param_dim, style_dim, lr_mul=lr_mlp, activation="fused_lrelu"
+                ),
+                EqualLinear(
+                    style_dim, style_dim, lr_mul=lr_mlp, activation="fused_lrelu"
+                )
+                ])
         self.channels = {
+            2: 512,
             4: 512,
             8: 512,
             16: 512,
@@ -427,28 +440,28 @@ class Generator(nn.Module):
             1024: 16 * channel_multiplier,
         }
 
-        self.input = ConstantInput(self.channels[4])
+        self.input = ConstantInput(self.channels[2])
         self.conv1 = StyledConv(
-            self.channels[4], self.channels[4], 3, style_dim, blur_kernel=blur_kernel
+            self.channels[2], self.channels[2], 3, style_dim, blur_kernel=blur_kernel
         )
-        self.to_rgb1 = ToRGB(self.channels[4], style_dim, upsample=False)
+        self.to_rgb1 = ToRGB(self.channels[2], style_dim, upsample=False)
 
         self.log_size = int(math.log(size, 2))
-        self.num_layers = (self.log_size - 2) * 2 + 1
+        self.num_layers = (self.log_size - 1) * 2 + 1
 
         self.convs = nn.ModuleList()
         self.upsamples = nn.ModuleList()
         self.to_rgbs = nn.ModuleList()
         self.noises = nn.Module()
 
-        in_channel = self.channels[4]
+        in_channel = self.channels[2]
 
         for layer_idx in range(self.num_layers):
             res = (layer_idx + 5) // 2
-            shape = [1, 1, 2 ** res, 2 ** res]
+            shape = [1, 1, 2 ** res, 8*2 ** res]
             self.noises.register_buffer(f"noise_{layer_idx}", torch.randn(*shape))
 
-        for i in range(3, self.log_size + 1):
+        for i in range(2, self.log_size + 1):
             out_channel = self.channels[2 ** i]
 
             self.convs.append(
@@ -472,16 +485,16 @@ class Generator(nn.Module):
 
             in_channel = out_channel
 
-        self.n_latent = self.log_size * 2 - 2
+        self.n_latent = self.log_size * 2 
 
     def make_noise(self):
         device = self.input.input.device
 
-        noises = [torch.randn(1, 1, 2 ** 2, 2 ** 2, device=device)]
+        noises = [torch.randn(1, 1, 2 ** 2, 8*2 ** 2, device=device)]
 
         for i in range(3, self.log_size + 1):
             for _ in range(2):
-                noises.append(torch.randn(1, 1, 2 ** i, 2 ** i, device=device))
+                noises.append(torch.randn(1, 1, 2 ** i, 8*2 ** i, device=device))
 
         return noises
 
@@ -498,6 +511,7 @@ class Generator(nn.Module):
 
     def forward(
         self,
+        labels,
         styles,
         return_latents=False,
         inject_index=None,
@@ -507,12 +521,14 @@ class Generator(nn.Module):
         noise=None,
         randomize_noise=True,
     ):
+        processed_param=self.preprocess(labels)
         if not input_is_latent:
-            styles = [self.style(s) for s in styles]
+            styles = [self.style(s)*processed_param for s in styles]
 
         if noise is None:
             if randomize_noise:
                 noise = [None] * self.num_layers
+                #noise = self.make_noise()
             else:
                 noise = [
                     getattr(self.noises, f"noise_{i}") for i in range(self.num_layers)
@@ -637,10 +653,11 @@ class ResBlock(nn.Module):
 
 
 class Discriminator(nn.Module):
-    def __init__(self, size, channel_multiplier=2, blur_kernel=[1, 3, 3, 1]):
+    def __init__(self, size, channel_multiplier=2, blur_kernel=[1, 3, 3, 1], c_dim=2):
         super().__init__()
 
         channels = {
+            2: 512,
             4: 512,
             8: 512,
             16: 512,
@@ -671,13 +688,19 @@ class Discriminator(nn.Module):
         self.stddev_feat = 1
 
         self.final_conv = ConvLayer(in_channel + 1, channels[4], 3)
-        self.final_linear = nn.Sequential(
-            #Here need to be modified 
-            EqualLinear(channels[4] * 4 * 4 * 8, channels[4]*4, activation="fused_lrelu"),
-            EqualLinear(channels[4]*4, 1),
+        
+        self.pre_final_linear = nn.Sequential(
+            EqualLinear(channels[4] * 4 * 4 * 8, channels[4], activation="fused_lrelu"),
+        )
+        self.c_pre_final_linear = nn.Sequential(
+            EqualLinear(c_dim, channels[4], activation="fused_lrelu"),
+        )
+        self.final_linear=nn.Sequential(
+            EqualLinear(channels[4], 16, activation="fused_lrelu"),
+            EqualLinear(16, 1),
         )
 
-    def forward(self, input):
+    def forward(self, input,label):
         out = self.convs(input)
 
         batch, channel, height, width = out.shape
@@ -693,7 +716,12 @@ class Discriminator(nn.Module):
         out = self.final_conv(out)
 
         out = out.view(batch, -1)
-        out = self.final_linear(out)
+        out = self.pre_final_linear(out)
+
+        # we add the conditional settings here. make labels weight much.
+        label=self.c_pre_final_linear(label)
+        out=out*label
+        out=self.final_linear(out)
 
         return out
 

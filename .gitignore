@@ -135,3 +135,5 @@ train.pbs
 styleGAN.o*
 factor.pt
 factor*.png
+tests/GANtest.ipynb
+tests/test.png
