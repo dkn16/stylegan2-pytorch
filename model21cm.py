@@ -316,6 +316,7 @@ class NoiseInjection(nn.Module):
         return  (self.weight * noise) + image
 
 
+#modified here. We change the figure size to generate a lightcone
 class ConstantInput(nn.Module):
     def __init__(self, channel, size=2):
         super().__init__()
