@@ -374,8 +374,8 @@ class ToRGB(nn.Module):
         if upsample:
             self.upsample = Upsample(blur_kernel)
 
-        self.conv = ModulatedConv2d(in_channel, 1, 1, style_dim, demodulate=False)
-        self.bias = nn.Parameter(torch.zeros(1, 1, 1, 1))
+        self.conv = ModulatedConv2d(in_channel, 2, 1, style_dim, demodulate=False)
+        self.bias = nn.Parameter(torch.zeros(1, 2, 1, 1))
 
     def forward(self, input, style, skip=None):
         out = self.conv(input, style)
@@ -422,10 +422,10 @@ class Generator(nn.Module):
 
         self.style = nn.Sequential(*layers)
         self.preprocess = nn.Sequential( *[EqualLinear(
-                    param_dim, style_dim, lr_mul=lr_mlp, activation="fused_lrelu"
+                    param_dim, int(style_dim/2), lr_mul=lr_mlp, activation="fused_lrelu"
                 ),
                 EqualLinear(
-                    style_dim, style_dim, lr_mul=lr_mlp, activation="fused_lrelu"
+                     int(style_dim/2),  int(style_dim/2), lr_mul=lr_mlp, activation="fused_lrelu"
                 )
                 ])
         self.channels = {
@@ -524,7 +524,12 @@ class Generator(nn.Module):
     ):
         processed_param=self.preprocess(labels)
         if not input_is_latent:
-            styles = [self.style(s)*processed_param for s in styles]
+            styles_1 = [self.style(s) for s in styles]
+        styles=[]
+        for s in styles_1:
+            s1 = s.clone()
+            s1[:,::2,...] = s[:,::2,...]*processed_param
+            styles.append(s1)
 
         if noise is None:
             if randomize_noise:
@@ -670,7 +675,7 @@ class Discriminator(nn.Module):
             1024: 16 * channel_multiplier,
         }
 
-        convs = [ConvLayer(1, channels[size], 1)]
+        convs = [ConvLayer(2, channels[size], 1)]
 
         log_size = int(math.log(size, 2))
 
@@ -694,7 +699,7 @@ class Discriminator(nn.Module):
             EqualLinear(channels[4] * 4 * 4 * 8, channels[4], activation="fused_lrelu"),
         )
         self.c_pre_final_linear = nn.Sequential(
-            EqualLinear(c_dim, channels[4], activation="fused_lrelu"),
+            EqualLinear(c_dim, int(channels[4]/2), activation="fused_lrelu"),
         )
         self.final_linear=nn.Sequential(
             EqualLinear(channels[4], 16, activation="fused_lrelu"),
@@ -721,8 +726,9 @@ class Discriminator(nn.Module):
 
         # we add the conditional settings here. make labels weight much.
         label=self.c_pre_final_linear(label)
-        out=out*label
-        out=self.final_linear(out)
+        out1=out.clone()
+        out1[:,::2,...]=out[:,::2,...]*label
+        out=self.final_linear(out1)
 
         return out
 

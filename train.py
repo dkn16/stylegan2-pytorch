@@ -72,10 +72,12 @@ def save_image(tensor, latent, fp, nrow=8, padding=2,
         **kwargs: Other arguments are documented in ``make_grid``.
     """
     from PIL import Image
-    grid = utils.make_grid(tensor, nrow=nrow, padding=padding, pad_value=pad_value,
+    #print(tensor[2,0,...].squeeze())
+    grid = utils.make_grid(tensor[:,0,...].unsqueeze(1), nrow=nrow, padding=padding, pad_value=pad_value,
                      normalize=normalize, range=range, scale_each=scale_each)
     # Add 0.5 after unnormalizing to [0, 255] to round to nearest integer
     ndarr = grid.to('cpu', torch.float32).numpy()
+    #print(ndarr[1])
     latent=latent.to('cpu', torch.float32).numpy()
     plt.figure(figsize=(10,14))
     plt.imshow(ndarr[0],vmin=0,vmax=3*np.std(ndarr[0]))
@@ -86,9 +88,28 @@ def save_image(tensor, latent, fp, nrow=8, padding=2,
         y_str.append('{:.3f}'.format(latent[i][0]*2+4)+','+'{:.1f}'.format(10**(latent[i][1]*1.398+1)))
     plt.yticks(y_ticks,y_str)
     plt.colorbar()
-    plt.savefig(fp, format=format,dpi=300,bbox_inches='tight')
+    plt.savefig(fp+'.png', format=format,dpi=300,bbox_inches='tight')
     if use_wandb:
-        wandb.log({'plt':wandb.Image(fp)},step=iteration)
+        wandb.log({'tb':wandb.Image(fp+'.png')},step=iteration)
+    plt.close()
+
+    grid = utils.make_grid(tensor[:,1,...].unsqueeze(1), nrow=nrow, padding=padding, pad_value=pad_value,
+                     normalize=normalize, range=range, scale_each=scale_each)
+    # Add 0.5 after unnormalizing to [0, 255] to round to nearest integer
+    ndarr = grid.to('cpu', torch.float32).numpy()
+    #latent=latent.to('cpu', torch.float32).numpy()
+    plt.figure(figsize=(10,14))
+    plt.imshow(ndarr[0])
+    y_ticks=[]
+    y_str=[]
+    for i in [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]:
+        y_ticks.append(32+i*66)
+        y_str.append('{:.3f}'.format(latent[i][0]*2+4)+','+'{:.1f}'.format(10**(latent[i][1]*1.398+1)))
+    plt.yticks(y_ticks,y_str)
+    plt.colorbar()
+    plt.savefig(fp+'_rho.png', format=format,dpi=300,bbox_inches='tight')
+    if use_wandb:
+        wandb.log({'mass':wandb.Image(fp+'_rho.png')},step=iteration)
     plt.close()
 
 def data_sampler(dataset, shuffle, distributed):
@@ -261,7 +282,7 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
 
         else:
             real_img_aug = real_img
-
+        #print(real_img.shape)
         #style mixing could cause some problem. We dont need it here.
         #print(len(noise[0]))
         #print(len(noise[1]))
@@ -397,7 +418,7 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
                     save_image(
                         sample[0:16],
                         sample_c,
-                        f"sample/{str(i).zfill(6)}.png",
+                        f"sample/{str(i).zfill(6)}",
                         nrow=1,
                         normalize=False,
                         range=(-1, 1),
@@ -411,7 +432,7 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
                     save_image(
                         sample[0:16],
                         sample_c,
-                        f"sample/{str(i).zfill(6)}.png",
+                        f"sample/{str(i).zfill(6)}",
                         nrow=1,
                         normalize=False,
                         range=(-1, 1),
@@ -534,7 +555,7 @@ if __name__ == "__main__":
     torch.manual_seed(42)
     random.seed(42)
     args = parser.parse_args()
-
+    print('yes')
     n_gpu = int(os.environ["WORLD_SIZE"]) if "WORLD_SIZE" in os.environ else 1
     args.distributed = n_gpu > 1
     sizes = [int(s.strip()) for s in args.size.split(",")]
@@ -635,9 +656,10 @@ if __name__ == "__main__":
         batch_size=args.batch,
         sampler=data_sampler(dataset, shuffle=True, distributed=args.distributed),
         drop_last=True,
+        num_workers=4
     )
 
     if get_rank() == 0 and wandb is not None and args.wandb:
-        wandb.init(project="stylegan 2", entity="dkn16")
+        wandb.init(project="stylegan 2 tbandrho", entity="dkn16")
 
     train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, device)

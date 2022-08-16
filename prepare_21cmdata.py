@@ -1,8 +1,9 @@
 import argparse
+from fileinput import filename
 from io import BytesIO
 import multiprocessing
 from functools import partial
-import os
+import os,re
 import numpy as np
 
 from PIL import Image
@@ -74,149 +75,81 @@ def prepare21cm(
     with env.begin(write=True) as txn:
         txn.put("length".encode("utf-8"), str(total).encode("utf-8"))
 
-# this function is specially designed for Xiaosheng's dataset
+# this function is specially designed for my dataset 
 def prepareconditional21cm(
-    env, size=[64,512]
+    env, size=[64,512],direc = '/scratch/dkn16/dataset_lc64_tb_rho'
 ):
     # get the filenames in the datapath. Here we can directly write the code
     filenames=[]
-    paramfilename=[]
+    # first we walk all the filenames
+    for root, dirs, files in os.walk(direc):
+        for i in range(len(files)):
+            filenames.append(os.path.join(root,files[i]))
+
+    total_1=len(filenames)
+    print(total_1)
+    print(filenames[0])
     total=0
-    for i in range(9998):
-        filenames.append('/work/zxs/data_lo28/Idlt-'+str(i)+'.npy')
-        paramfilename.append('/work/zxs/data_loo28/Idlt-'+str(i)+'-y.npy')
+    pattern = re.compile(r'\d+.\d+')
+
 
     #check the dimension of data
     datacache=np.load(filenames[0])
-    if datacache.ndim!=3:
-        print('Please check the dimension of 21cm cube, should be 3D')
-        exit
-    
+    if datacache.ndim!=4:
+        print('Please check the dimension of 21cm cube, should be 3D plus one channel dimension, in total 4')
+        return 0
+    #tb_cache=datacache[0,::32,:0+size[0],0:0+size[1]]/30.
+    #print(tb_cache.shape)
     slices=2
-    width=np.shape(datacache)[1]
-    length=np.shape(datacache)[2]
-    widthstartpoint=int(np.abs(size[0]-width)/2.)
-    lengthstartpoint=int(np.abs(size[1]-length)/2.)
+    width=np.shape(datacache)[2]
+    length=np.shape(datacache)[3]
+    #check if we use the right 'size' parameter
+    if width!=size[0] or length!=size[1]:
+        print('Dataset resolution does not match the size parameter. Please check the resolution of your dataset.')
+        return 0
 
     #load the 21cm datacubes
     
-    for i in range(9998):
+    for i in range(total_1):
         datacube=np.load(filenames[i]).astype(np.float32)
-        datacache=datacube[::33,widthstartpoint:widthstartpoint+size[0],0:0+size[1]]/30.
-        paramcache=(np.load(paramfilename[i]).astype(np.float32)-np.array([4.,1.]))/np.array([2.,1.398]).astype(np.float64)
+        datacube=datacube.transpose(1,0,2,3)
+        
+        tb_cache=datacube[::32,:,:0+size[0],0:0+size[1]]/30.
+        #rho_cache=datacube[1,::32,:0+size[0],0:0+size[1]]/30.
+        result = pattern.findall(filenames[i])
+        #print(result)
+        #return 0
+        paramcache =  np.array([float(result[1]),np.log10(float(result[0]))])
+        paramcache=(paramcache-np.array([4.,1.]))/np.array([2.,1.398]).astype(np.float64)
         #print(paramcache)
         #in many cases we dont need to do the normalization here, the 21cm signal is always less than 255, thus PIL can handle this
         #datacache=datacache/(3*np.std(datacache))
         for i in range(slices):
-            key = f"{size[0]}-{str(total).zfill(6)}".encode("utf-8")
+            key = f"{size[0]}-{str(total).zfill(6)}_tb".encode("utf-8")
+            #key_rho = f"{size[0]}-{str(total).zfill(6)}_rho".encode("utf-8")
             key_label = f"{size[0]}-{str(total).zfill(6)}_label".encode("utf-8")
             with env.begin(write=True) as txn:
-                txn.put(key, datacache[i].copy())
+                txn.put(key, tb_cache[i].copy())
+            #with env.begin(write=True) as txn:
+            #    txn.put(key_rho, rho_cache[i].copy())
             with env.begin(write=True) as txn:
                 txn.put(key_label,paramcache.copy())
             total += 1
-        datacache=datacube.transpose(1,0,2)[::33,widthstartpoint:widthstartpoint+size[0],1:1+size[1]]/30.
+        datacube=datacube.transpose(2,1,0,3)
+        tb_cache=datacube[::32,:,:0+size[0],0:0+size[1]]/30.
+        #rho_cache=datacube[1,::32,:0+size[0],0:0+size[1]]/30.
         for i in range(slices):
-            key = f"{size[0]}-{str(total).zfill(6)}".encode("utf-8")
+            key = f"{size[0]}-{str(total).zfill(6)}_tb".encode("utf-8")
+            #key_rho = f"{size[0]}-{str(total).zfill(6)}_rho".encode("utf-8")
             key_label = f"{size[0]}-{str(total).zfill(6)}_label".encode("utf-8")
             with env.begin(write=True) as txn:
-                txn.put(key, datacache[i].copy())
+                txn.put(key, tb_cache[i].copy())
+            #with env.begin(write=True) as txn:
+            #    txn.put(key_rho, rho_cache[i].copy())
             with env.begin(write=True) as txn:
                 txn.put(key_label,paramcache.copy())
             total += 1
-    
-    # Here we start to read data in another file
-    filenames=[]
-    paramfilename=[]
-    for i in range(9996):
-        filenames.append('/work/zxs/data_lo29/Idlt-'+str(i)+'.npy')
-        paramfilename.append('/work/zxs/data_loo29/Idlt-'+str(i)+'-y.npy')
-
-    #check the dimension of data
-    datacache=np.load(filenames[0])
-    if datacache.ndim!=3:
-        print('Please check the dimension of 21cm cube, should be 3D')
-        exit
-    
-    slices=2
-    width=np.shape(datacache)[1]
-    length=np.shape(datacache)[2]
-    widthstartpoint=int(np.abs(size[0]-width)/2.)
-    lengthstartpoint=int(np.abs(size[1]-length)/2.)
-
-    #load the 21cm datacubes
-    
-    for i in range(9996):
-        datacube=np.load(filenames[i]).astype(np.float32)
-        datacache=datacube[::33,widthstartpoint:widthstartpoint+size[0],1:1+size[1]]/30.
-        paramcache=(np.load(paramfilename[i]).astype(np.float32)-np.array([4.,1.]))/np.array([2.,1.398]).astype(np.float64)
-        #print(paramcache)
-        #in many cases we dont need to do the normalization here, the 21cm signal is always less than 255, thus PIL can handle this
-        #datacache=datacache/(3*np.std(datacache))
-        for i in range(slices):
-            key = f"{size[0]}-{str(total).zfill(6)}".encode("utf-8")
-            key_label = f"{size[0]}-{str(total).zfill(6)}_label".encode("utf-8")
-            with env.begin(write=True) as txn:
-                txn.put(key, datacache[i].copy())
-            with env.begin(write=True) as txn:
-                txn.put(key_label,paramcache.copy())
-            total += 1
-        datacache=datacube.transpose(1,0,2)[::33,widthstartpoint:widthstartpoint+size[0],2:2+size[1]]/30.
-        for i in range(slices):
-            key = f"{size[0]}-{str(total).zfill(6)}".encode("utf-8")
-            key_label = f"{size[0]}-{str(total).zfill(6)}_label".encode("utf-8")
-            with env.begin(write=True) as txn:
-                txn.put(key, datacache[i].copy())
-            with env.begin(write=True) as txn:
-                txn.put(key_label,paramcache.copy())
-            total += 1
-
-    # Here we start to read data in another file
-    filenames=[]
-    paramfilename=[]
-    for i in range(9999):
-        filenames.append('/work/zxs/data_lo30/Idlt-'+str(i)+'.npy')
-        paramfilename.append('/work/zxs/data_loo30/Idlt-'+str(i)+'-y.npy')
-
-    #check the dimension of data
-    datacache=np.load(filenames[0])
-    if datacache.ndim!=3:
-        print('Please check the dimension of 21cm cube, should be 3D')
-        exit
-    
-    slices=2
-    width=np.shape(datacache)[1]
-    length=np.shape(datacache)[2]
-    widthstartpoint=int(np.abs(size[0]-width)/2.)
-    lengthstartpoint=int(np.abs(size[1]-length)/2.)
-
-    #load the 21cm datacubes
-    
-    for i in range(9999):
-        datacube=np.load(filenames[i]).astype(np.float32)
-        datacache=datacube[::33,widthstartpoint:widthstartpoint+size[0],2:2+size[1]]/30.
-        paramcache=(np.load(paramfilename[i]).astype(np.float32)-np.array([4.,1.]))/np.array([2.,1.398]).astype(np.float64)
-        #print(paramcache)
-        #in many cases we dont need to do the normalization here, the 21cm signal is always less than 255, thus PIL can handle this
-        #datacache=datacache/(3*np.std(datacache))
-        for i in range(slices):
-            key = f"{size[0]}-{str(total).zfill(6)}".encode("utf-8")
-            key_label = f"{size[0]}-{str(total).zfill(6)}_label".encode("utf-8")
-            with env.begin(write=True) as txn:
-                txn.put(key, datacache[i].copy())
-            with env.begin(write=True) as txn:
-                txn.put(key_label,paramcache.copy())
-            total += 1
-        datacache=datacube.transpose(1,0,2)[::33,widthstartpoint:widthstartpoint+size[0],0:0+size[1]]/30.
-        for i in range(slices):
-            key = f"{size[0]}-{str(total).zfill(6)}".encode("utf-8")
-            key_label = f"{size[0]}-{str(total).zfill(6)}_label".encode("utf-8")
-            with env.begin(write=True) as txn:
-                txn.put(key, datacache[i].copy())
-            with env.begin(write=True) as txn:
-                txn.put(key_label,paramcache.copy())
-            total += 1
-
+    print(total)
     with env.begin(write=True) as txn:
         txn.put("length".encode("utf-8"), str(total).encode("utf-8"))
 
